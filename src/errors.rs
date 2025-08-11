@@ -22,6 +22,9 @@ pub enum ProxyError {
     
     #[error("Service unavailable")]
     ServiceUnavailable,
+
+    #[error("Batch processing failed: {0}")]
+    BatchProcessingFailed(String),
 }
 
 impl IntoResponse for ProxyError {
@@ -46,6 +49,10 @@ impl IntoResponse for ProxyError {
             ProxyError::ServiceUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Service temporarily unavailable",
+            ),
+            ProxyError::BatchProcessingFailed(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Batch processing failed",
             ),
         };
 

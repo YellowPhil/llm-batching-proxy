@@ -1,11 +1,17 @@
+use std::{sync::Arc, time::Duration};
+
+use axum::{Json, Router, extract::State, routing::{post, get}};
 use clap::Parser;
 use eyre::Context;
 use serde::{Deserialize, Serialize};
 
+mod batching;
 mod config;
 mod errors;
 
 use config::Config;
+
+use crate::{batching::BatchProcessor, errors::ProxyError};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -43,13 +49,77 @@ struct SingleResponse {
     embedding: Vec<f32>,
 }
 
+#[derive(Clone)]
+struct AppState {
+    batch_processor: Arc<BatchProcessor>,
+    start_time: tokio::time::Instant,
+    config: Arc<Config>,
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    // Initialize tracing
+    // tracing_subscriber::fmt()
+    //     .with_env_filter("auto_batching_proxy=debug,info")
+    //     .with_target(false)
+    //     .compact()
+    //     .init();
+
     let args = Args::parse();
-    let config = Config::load(&args.config, args.debug).wrap_err("Failed to load config from file")?;
+    let config = Config::load(&args.config, args.debug)?;
 
-    tracing::info!("Config loaded: {}", config);
-    tracing::info!("Starting server on port {}", args.port);
+    tracing::info!("Starting Server on port {}", args.port);
+    tracing::info!("Configuration: {:?}", config);
 
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .pool_max_idle_per_host(10)
+        .build()?;
+
+    let batch_processor = Arc::new(
+        BatchProcessor::new(args.inference_url.clone(), config.clone(), Arc::new(client)).await?,
+    );
+
+    let app_state = AppState {
+        batch_processor,
+        start_time: tokio::time::Instant::now(),
+        config: Arc::new(config),
+    };
+
+    let app = Router::new()
+        .route("/embed", post(embed_single))
+        .with_state(app_state);
+        // .layer(CorsLayer::permissive())
+        // .layer(TraceLayer::new_for_http());
+
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
+
+    tracing::info!("Server running on http://0.0.0.0:{}", args.port);
+    tracing::info!("Ready to accept requests!");
+
+    axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Handle single embedding request (auto-batched)
+#[tracing::instrument(skip(state))]
+async fn embed_single(
+    State(state): State<AppState>,
+    Json(payload): Json<SingleRequest>,
+) -> Result<Json<SingleResponse>, ProxyError> {
+    tracing::debug!("Received single embed request for: {}", payload.input);
+
+    let start = tokio::time::Instant::now();
+
+    match state.batch_processor.process_single(payload.input).await {
+        Ok(embedding) => {
+            let duration = start.elapsed();
+            tracing::debug!("Single request processed in {:?}", duration);
+            Ok(Json(SingleResponse { embedding }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to process single request: {}", e);
+            Err(e)
+        }
+    }
 }

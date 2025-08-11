@@ -4,14 +4,14 @@ use std::{fs, path::Path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub max_batch_size: u32,
+    pub max_batch_size: usize,
     pub max_wait_time_ms: u32,
     pub debug: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        
+
         Self {
             max_batch_size: 32,
             max_wait_time_ms: 1000,
