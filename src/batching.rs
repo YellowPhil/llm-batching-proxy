@@ -38,7 +38,7 @@ impl BatchProcessor {
         config: config::Config,
         client: Arc<reqwest::Client>,
     ) -> Result<Self> {
-        let (batch_sender, batch_receiver) = mpsc::channel(config.max_batch_size * 4);
+        let (batch_sender, batch_receiver) = mpsc::channel(config.max_batch_size * 10);
 
         let processor = Self {
             client: client.clone(),
@@ -93,7 +93,6 @@ impl BatchProcessor {
         }
     }
 
-    /// Start the background worker that processes batches
     async fn start_batch_worker(&self, mut receiver: mpsc::Receiver<BatchRequest>) {
         let client = self.client.clone();
         let inference_url = self.inference_url.clone();
@@ -147,7 +146,6 @@ impl BatchProcessor {
         let timeout_duration = Duration::from_millis(self.config.max_wait_time_ms as u64);
 
         tokio::spawn(async move {
-            // If the timeout duration is less than 100ms, the CPU will be wasted
             let sleep_duration = std::cmp::min(timeout_duration / 10, Duration::from_millis(100));
 
             loop {
@@ -207,7 +205,6 @@ impl BatchProcessor {
         Ok(())
     }
 
-    /// Send batch request to inference service
     #[tracing::instrument(skip(client, inputs))]
     async fn send_batch_request(
         client: &Arc<reqwest::Client>,

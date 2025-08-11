@@ -39,7 +39,7 @@ impl Config {
 
         let content = fs::read_to_string(path)?;
         let mut config: Config = toml::from_str(&content)?;
-        config.debug = debug; // Override with command line argument
+        config.debug = debug;
 
         config.validate()?;
 

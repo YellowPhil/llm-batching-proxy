@@ -1,8 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
-use axum::{Json, Router, extract::State, routing::{post, get}};
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{get, post},
+};
 use clap::Parser;
-use eyre::Context;
 use serde::{Deserialize, Serialize};
 
 mod batching;
@@ -52,19 +55,10 @@ struct SingleResponse {
 #[derive(Clone)]
 struct AppState {
     batch_processor: Arc<BatchProcessor>,
-    start_time: tokio::time::Instant,
-    config: Arc<Config>,
 }
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    // Initialize tracing
-    // tracing_subscriber::fmt()
-    //     .with_env_filter("auto_batching_proxy=debug,info")
-    //     .with_target(false)
-    //     .compact()
-    //     .init();
-
     let args = Args::parse();
     let config = Config::load(&args.config, args.debug)?;
 
@@ -82,15 +76,15 @@ async fn main() -> eyre::Result<()> {
 
     let app_state = AppState {
         batch_processor,
-        start_time: tokio::time::Instant::now(),
-        config: Arc::new(config),
+        // start_time: tokio::time::Instant::now(),
+        // config: Arc::new(config),
     };
 
     let app = Router::new()
         .route("/embed", post(embed_single))
         .with_state(app_state);
-        // .layer(CorsLayer::permissive())
-        // .layer(TraceLayer::new_for_http());
+    // .layer(CorsLayer::permissive())
+    // .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
 
@@ -101,7 +95,6 @@ async fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Handle single embedding request (auto-batched)
 #[tracing::instrument(skip(state))]
 async fn embed_single(
     State(state): State<AppState>,
