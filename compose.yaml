@@ -1,0 +1,16 @@
+services:
+  text-embeddings-inference:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    command: --model-id Qwen/Qwen3-Embedding-0.6B
+    ports:
+      - "8080:80"
+
+  auto-batching-proxy:
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      text-embeddings-inference:
+        condition: service_started
+    volumes:
+      - ./config.toml:/app/config.toml:ro
