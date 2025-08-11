@@ -1,5 +1,11 @@
 use clap::Parser;
+use eyre::Context;
 use serde::{Deserialize, Serialize};
+
+mod config;
+mod errors;
+
+use config::Config;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -12,6 +18,9 @@ struct Args {
 
     #[arg(long, default_value = "http://127.0.0.1:8080")]
     inference_url: String,
+
+    #[arg(long)]
+    debug: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,6 +44,12 @@ struct SingleResponse {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> eyre::Result<()> {
     let args = Args::parse();
+    let config = Config::load(&args.config, args.debug).wrap_err("Failed to load config from file")?;
+
+    tracing::info!("Config loaded: {}", config);
+    tracing::info!("Starting server on port {}", args.port);
+
+    Ok(())
 }
