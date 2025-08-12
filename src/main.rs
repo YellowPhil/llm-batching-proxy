@@ -1,20 +1,21 @@
 use std::{sync::Arc, time::Duration};
 
 use axum::{
-    Json, Router,
-    extract::State,
+    Router,
     routing::{get, post},
 };
 use clap::Parser;
-use serde::{Deserialize, Serialize};
 
 mod batching;
 mod config;
+mod controller;
 mod errors;
 
 use config::Config;
+//use controller::{AppState, embed_single, embed_batch, health_check};
+use batching::BatchProcessor;
 
-use crate::{batching::BatchProcessor, errors::ProxyError};
+use crate::controller::{AppState, embed_single, health_check};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -30,31 +31,6 @@ struct Args {
 
     #[arg(long)]
     debug: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct EmbedRequest {
-    inputs: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct SingleRequest {
-    input: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct EmbedResponse {
-    embeddings: Vec<Vec<f32>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct SingleResponse {
-    embedding: Vec<f32>,
-}
-
-#[derive(Clone)]
-struct AppState {
-    batch_processor: Arc<BatchProcessor>,
 }
 
 #[tokio::main]
@@ -74,17 +50,12 @@ async fn main() -> eyre::Result<()> {
         BatchProcessor::new(args.inference_url.clone(), config.clone(), Arc::new(client)).await?,
     );
 
-    let app_state = AppState {
-        batch_processor,
-        // start_time: tokio::time::Instant::now(),
-        // config: Arc::new(config),
-    };
+    let app_state = AppState::new(batch_processor);
 
     let app = Router::new()
         .route("/embed", post(embed_single))
+        .route("/health", get(health_check))
         .with_state(app_state);
-    // .layer(CorsLayer::permissive())
-    // .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
 
@@ -93,26 +64,4 @@ async fn main() -> eyre::Result<()> {
 
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-#[tracing::instrument(skip(state))]
-async fn embed_single(
-    State(state): State<AppState>,
-    Json(payload): Json<SingleRequest>,
-) -> Result<Json<SingleResponse>, ProxyError> {
-    tracing::debug!("Received single embed request for: {}", payload.input);
-
-    let start = tokio::time::Instant::now();
-
-    match state.batch_processor.process_single(payload.input).await {
-        Ok(embedding) => {
-            let duration = start.elapsed();
-            tracing::debug!("Single request processed in {:?}", duration);
-            Ok(Json(SingleResponse { embedding }))
-        }
-        Err(e) => {
-            tracing::error!("Failed to process single request: {}", e);
-            Err(e)
-        }
-    }
 }
