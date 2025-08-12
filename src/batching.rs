@@ -3,13 +3,12 @@ use crossbeam::channel;
 use eyre::Result;
 use std::{
     collections::VecDeque,
-    result,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::sync::{Notify, RwLock};
 use tokio::{
-    sync::{Mutex, oneshot},
+    sync::{oneshot},
     time::timeout,
 };
 

@@ -10,7 +10,6 @@ pub mod batching;
 pub mod config;
 mod controller;
 pub mod errors;
-pub mod mock_server;
 
 use config::Config;
 //use controller::{AppState, embed_single, embed_batch, health_check};

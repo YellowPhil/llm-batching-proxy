@@ -1,4 +1,4 @@
-max_batch_size = 32
-max_wait_time_ms = 1000
-max_concurrent_workers = 4
+max_batch_size = 3
+max_wait_time_ms = 10000
+max_concurrent_workers = 10
 debug = false
