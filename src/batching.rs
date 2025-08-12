@@ -80,7 +80,7 @@ impl BatchProcessor {
 
         let result = timeout(
             Duration::from_millis(
-                self.config.max_wait_time_ms as u64 + self.config.max_batch_size as u64 / 5,
+                self.config.max_wait_time_ms as u64 + self.config.max_batch_size as u64 / 10,
             ),
             receiver,
         )
@@ -129,15 +129,8 @@ impl BatchProcessor {
         inference_url: String,
         receiver: channel::Receiver<BatchRequest>,
     ) {
-        loop {
-            match receiver.recv() {
-                Ok(batch) => {
-                    Self::process_batch(worker_id, &client, &inference_url, batch).await;
-                }
-                Err(channel::RecvError) => {
-                    break;
-                }
-            }
+        while let Ok(batch) = receiver.recv() {
+            Self::process_batch(worker_id, &client, &inference_url, batch).await;
         }
 
         tracing::debug!("Worker {} shutting down", worker_id);
@@ -271,7 +264,7 @@ impl BatchProcessor {
         );
 
         let response = client
-            .post(&format!("{}/embed", inference_url))
+            .post(inference_url)
             .json(&request_payload)
             .send()
             .await

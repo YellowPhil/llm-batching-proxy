@@ -23,16 +23,22 @@ impl Default for Config {
 
 impl std::fmt::Display for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "max_batch_size: {}, max_wait_time_ms: {}, max_concurrent_workers: {}, debug: {}", 
-            self.max_batch_size, self.max_wait_time_ms, self.max_concurrent_workers, self.debug)
+        write!(
+            f,
+            "max_batch_size: {}, max_wait_time_ms: {}, max_concurrent_workers: {}, debug: {}",
+            self.max_batch_size, self.max_wait_time_ms, self.max_concurrent_workers, self.debug
+        )
     }
 }
 
 impl Config {
     pub fn load(path: &str, debug: bool) -> Result<Self> {
         if !Path::new(path).exists() {
-            let mut default_config = Self::default();
-            default_config.debug = debug;
+            let default_config = Self {
+                debug,
+                ..Self::default()
+            };
+
             let toml_content = toml::to_string_pretty(&default_config)?;
             fs::write(path, toml_content)?;
             tracing::info!("Created default configuration file at {}", path);
