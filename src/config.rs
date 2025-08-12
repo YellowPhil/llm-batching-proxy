@@ -38,16 +38,16 @@ impl Config {
                 debug,
                 ..Self::default()
             };
-
-            let toml_content = toml::to_string_pretty(&default_config)?;
-            fs::write(path, toml_content)?;
-            tracing::info!("Created default configuration file at {}", path);
+            let content = toml::to_string_pretty(&default_config)?;
+            fs::write(path, content)?;
             return Ok(default_config);
         }
 
         let content = fs::read_to_string(path)?;
         let mut config: Config = toml::from_str(&content)?;
         config.debug = debug;
+        tracing::info!("Loaded configuration from {}", path);
+        tracing::debug!("Configuration: {}", config);
 
         config.validate()?;
 
@@ -67,8 +67,8 @@ impl Config {
             return Err(eyre::eyre!("max_wait_time_ms must be greater than 0"));
         }
 
-        if self.max_wait_time_ms > 10000 {
-            return Err(eyre::eyre!("max_wait_time_ms too large (max: 10000ms)"));
+        if self.max_wait_time_ms > 100000 {
+            return Err(eyre::eyre!("max_wait_time_ms too large (max: 100000ms)"));
         }
 
         if self.max_concurrent_workers == 0 {
@@ -80,5 +80,16 @@ impl Config {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_non_existent_config() {
+        let config = Config::load("/this/path/does/not/exist", true);
+        assert_eq!(config.is_err(), true);
     }
 }

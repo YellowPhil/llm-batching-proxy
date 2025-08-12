@@ -6,14 +6,16 @@ use axum::{
 };
 use clap::Parser;
 
-mod batching;
-mod config;
+pub mod batching;
+pub mod config;
 mod controller;
-mod errors;
+pub mod errors;
+pub mod mock_server;
 
 use config::Config;
 //use controller::{AppState, embed_single, embed_batch, health_check};
 use batching::BatchProcessor;
+use tracing_subscriber::EnvFilter;
 
 use crate::controller::{AppState, embed_single, health_check};
 
@@ -38,12 +40,20 @@ async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     let config = Config::load(&args.config, args.debug)?;
 
+    tracing_subscriber::fmt()
+        .with_thread_ids(true)
+        .with_target(false)
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .with_level(true)
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     tracing::info!("Starting Server on port {}", args.port);
     tracing::info!("Configuration: {:?}", config);
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .pool_max_idle_per_host(10)
+        .pool_max_idle_per_host(100)
         .build()?;
 
     let batch_processor = Arc::new(
