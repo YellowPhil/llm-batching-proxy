@@ -14,6 +14,7 @@ use tokio::{
     sync::{Mutex, oneshot},
     time::timeout,
 };
+use tokio::sync::Notify;
 
 #[derive(Debug)]
 struct PendingRequest {
@@ -32,8 +33,10 @@ pub struct BatchProcessor {
     client: Arc<reqwest::Client>,
     inference_url: String,
     config: config::Config,
+
     pending_requests: Arc<Mutex<VecDeque<PendingRequest>>>,
     batch_sender: channel::Sender<BatchRequest>,
+    request_notify: Arc<Notify>,
 }
 
 impl BatchProcessor {
@@ -50,6 +53,7 @@ impl BatchProcessor {
             config,
             pending_requests: Arc::new(Mutex::new(VecDeque::new())),
             batch_sender,
+            request_notify: Arc::new(Notify::new()),
         };
 
         processor.start_worker_pool(batch_receiver).await;
@@ -76,6 +80,9 @@ impl BatchProcessor {
 
         if should_create_batch {
             self.try_create_batch().await?;
+        } else {
+            // Notify timeout worker that a new request arrived
+            self.request_notify.notify_one();
         }
 
         let result = timeout(
@@ -189,43 +196,74 @@ impl BatchProcessor {
         let pending_requests = self.pending_requests.clone();
         let timeout_duration = Duration::from_millis(self.config.max_wait_time_ms as u64);
         let batch_sender = self.batch_sender.clone();
+        let request_notify = self.request_notify.clone();
 
         tokio::spawn(async move {
+            let mut next_timeout_check = Instant::now() + timeout_duration;
+            
             loop {
-                tokio::time::sleep(timeout_duration).await;
-
-                let should_create_batch = {
-                    let pending = pending_requests.lock().await;
-                    pending
-                        .front()
-                        .map(|oldest| oldest.created_at.elapsed() >= timeout_duration)
-                        .unwrap_or(false)
-                };
-
-                if should_create_batch {
-                    let requests: Vec<_> = {
-                        let mut pending = pending_requests.lock().await;
-                        pending.drain(..).collect()
-                    };
-
-                    if !requests.is_empty() {
-                        let batch = BatchRequest {
-                            requests,
-                            created_at: Instant::now(),
-                        };
-
-                        tracing::debug!(
-                            "Timeout reached, creating batch with {} requests",
-                            batch.requests.len()
-                        );
-
-                        if let Err(e) = batch_sender.send(batch) {
-                            tracing::error!("Failed to send timeout batch: {}", e);
+                let wait_duration = next_timeout_check.saturating_duration_since(Instant::now());
+                
+                tokio::select! {
+                    _ = request_notify.notified() => {
+                        if Instant::now() >= next_timeout_check {
+                            Self::check_and_process_timeouts(
+                                &pending_requests,
+                                &batch_sender,
+                                timeout_duration,
+                            ).await;
+                            next_timeout_check = Instant::now() + timeout_duration;
                         }
+                    }
+                    _ = tokio::time::sleep(wait_duration) => {
+                        Self::check_and_process_timeouts(
+                            &pending_requests,
+                            &batch_sender,
+                            timeout_duration,
+                        ).await;
+                        // Schedule next timeout check
+                        next_timeout_check = Instant::now() + timeout_duration;
                     }
                 }
             }
         });
+    }
+
+    async fn check_and_process_timeouts(
+        pending_requests: &Arc<Mutex<VecDeque<PendingRequest>>>,
+        batch_sender: &channel::Sender<BatchRequest>,
+        timeout_duration: Duration,
+    ) {
+        let should_create_batch = {
+            let pending = pending_requests.lock().await;
+            pending
+                .front()
+                .map(|oldest| oldest.created_at.elapsed() >= timeout_duration)
+                .unwrap_or(false)
+        };
+
+        if should_create_batch {
+            let requests: Vec<_> = {
+                let mut pending = pending_requests.lock().await;
+                pending.drain(..).collect()
+            };
+
+            if !requests.is_empty() {
+                let batch = BatchRequest {
+                    requests,
+                    created_at: Instant::now(),
+                };
+
+                tracing::debug!(
+                    "Timeout reached, creating batch with {} requests",
+                    batch.requests.len()
+                );
+
+                if let Err(e) = batch_sender.send(batch) {
+                    tracing::error!("Failed to send timeout batch: {}", e);
+                }
+            }
+        }
     }
 
     async fn try_create_batch(&self) -> Result<(), ProxyError> {
