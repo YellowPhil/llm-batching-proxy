@@ -6,15 +6,16 @@ use std::{fs, path::Path};
 pub struct Config {
     pub max_batch_size: usize,
     pub max_wait_time_ms: u32,
+    pub max_concurrent_workers: usize,
     pub debug: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-
         Self {
             max_batch_size: 32,
             max_wait_time_ms: 1000,
+            max_concurrent_workers: 4,
             debug: false,
         }
     }
@@ -22,7 +23,8 @@ impl Default for Config {
 
 impl std::fmt::Display for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "max_batch_size: {}, max_wait_time_ms: {}, debug: {}", self.max_batch_size, self.max_wait_time_ms, self.debug)
+        write!(f, "max_batch_size: {}, max_wait_time_ms: {}, max_concurrent_workers: {}, debug: {}", 
+            self.max_batch_size, self.max_wait_time_ms, self.max_concurrent_workers, self.debug)
     }
 }
 
@@ -61,6 +63,14 @@ impl Config {
 
         if self.max_wait_time_ms > 10000 {
             return Err(eyre::eyre!("max_wait_time_ms too large (max: 10000ms)"));
+        }
+
+        if self.max_concurrent_workers == 0 {
+            return Err(eyre::eyre!("max_concurrent_workers must be greater than 0"));
+        }
+
+        if self.max_concurrent_workers > 32 {
+            return Err(eyre::eyre!("max_concurrent_workers too large (max: 32)"));
         }
 
         Ok(())
