@@ -12,7 +12,6 @@ mod controller;
 pub mod errors;
 
 use config::Config;
-//use controller::{AppState, embed_single, embed_batch, health_check};
 use batching::BatchProcessor;
 use tracing_subscriber::EnvFilter;
 
@@ -27,7 +26,7 @@ struct Args {
     #[arg(short, long, default_value = "3000")]
     port: u16,
 
-    #[arg(long, default_value = "http://127.0.0.1:8080")]
+    #[arg(long, required = true)]
     inference_url: String,
 
     #[arg(long)]
