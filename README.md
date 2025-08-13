@@ -33,6 +33,10 @@ A high-performance, intelligent auto-batching proxy service for ML inference wor
 - **Configuration System**: Flexible, file-based configuration management
 - **Error Handling**: Robust error handling with proper HTTP status codes
 
+
+### Measures
+
+
 ## 📋 Requirements
 
 - **Docker & Docker Compose** (for easy deployment)
