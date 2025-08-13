@@ -2,14 +2,19 @@
 
 A high-performance, intelligent auto-batching proxy service for ML inference workloads, built in Rust. This service automatically batches individual inference requests to maximize GPU utilization and throughput while maintaining a simple API for clients.
 
+## Benchmarking
+
+![benchmark.png](./bench.png)
+
+### Performance Analysis & Batching Benefits
+
+Benchmarking demonstrates that the auto-batching solution effectively reduces latency throughput compared to individual requests.  While the primary performance bottleneck remains CPU usage during model inference, the benefits scale exponentially with higher QPS. Additionally, smaller token counts benefit more from batching due to lower per-request processing overhead and faster batch formation, with short text (10-50 tokens)
+
 ## 🚀 Key Features
 
-- **Intelligent Auto-batching**: Automatically combines individual requests into optimal batches
 - **Configurable Batching Strategy**: Tunable batch size and timeout parameters
 - **High Performance**: Async Rust implementation with minimal latency overhead  
-- **Comprehensive Metrics**: Built-in performance monitoring and observability
 - **Production Ready**: Full error handling, logging, health checks, and Docker support
-- **Flexible API**: Supports both individual and batch requests
 
 ## 🏗️ Architecture
 
@@ -29,7 +34,6 @@ A high-performance, intelligent auto-batching proxy service for ML inference wor
 ### Core Components
 
 - **BatchProcessor**: Intelligent batching engine with timeout and size-based triggering
-- **MetricsCollector**: Comprehensive performance tracking and observability  
 - **Configuration System**: Flexible, file-based configuration management
 - **Error Handling**: Robust error handling with proper HTTP status codes
 
@@ -62,13 +66,16 @@ max_batch_size = 32
 
 # Maximum wait time in milliseconds before forcing a batch
 max_wait_time_ms = 100
+
+# Maximum number of workers
+max_concurrent_workers = 20
 ```
 
 ### 3. Run with Docker Compose
 
 ```bash
 # Start both inference service and proxy
-docker-compose up -d
+docker-compose up --build -d
 
 # Check health
 curl http://localhost:3000/health
@@ -116,8 +123,6 @@ Response:
 
 ## 📊 Batching Strategy
 
-The service uses a sophisticated batching strategy that triggers batch processing when:
-
 1. **Batch Size Limit**: Number of pending requests reaches `max_batch_size`
 2. **Timeout**: Oldest request has been waiting for `max_wait_time_ms` 
 3. **Intelligent Timing**: Optimizes for both latency and throughput
@@ -136,7 +141,7 @@ Request N ──┘
 
 Based on testing with typical workloads:
 
-- **Latency Improvement**: 2-5x faster than individual requests
-- **Throughput Improvement**: 3-8x higher requests/second  
-- **GPU Utilization**: 60-80% improvement in batch scenarios
-- **Memory Efficiency**: Reduced per-request overhead
+- **Latency Improvement**
+- **Throughput Improvement**
+- **GPU Utilization**
+- **Memory Efficiency**
