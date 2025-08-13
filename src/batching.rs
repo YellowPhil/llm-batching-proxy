@@ -1,16 +1,14 @@
 use crate::{config, controller::EmbedRequest, errors::ProxyError};
-use crossbeam::channel;
 use eyre::Result;
 use std::{
     collections::VecDeque,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::{Notify, RwLock};
-use tokio::{
-    sync::{oneshot},
-    time::timeout,
-};
+use tokio::sync::{Mutex, Notify};
+use tokio::{sync::oneshot, time::timeout};
+
+const TIMEOUT_DURATION: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 struct PendingRequest {
@@ -30,8 +28,8 @@ pub struct BatchProcessor {
     inference_url: String,
     config: config::Config,
 
-    request_queue: Arc<RwLock<VecDeque<PendingRequest>>>,
-    batch_sender: channel::Sender<BatchRequest>,
+    request_queue: Arc<Mutex<VecDeque<PendingRequest>>>,
+    batch_sender: async_channel::Sender<BatchRequest>,
     request_notify: Arc<Notify>,
 }
 
@@ -42,13 +40,13 @@ impl BatchProcessor {
         client: Arc<reqwest::Client>,
     ) -> Result<Self> {
         let (batch_sender, batch_receiver) =
-            channel::bounded::<BatchRequest>(config.max_batch_size * 10);
+            async_channel::bounded::<BatchRequest>(config.max_batch_size * 10);
 
         let processor = Self {
             client: client.clone(),
             inference_url,
             config,
-            request_queue: Arc::new(RwLock::new(VecDeque::new())),
+            request_queue: Arc::new(Mutex::new(VecDeque::new())),
             batch_sender,
             request_notify: Arc::new(Notify::new()),
         };
@@ -68,37 +66,33 @@ impl BatchProcessor {
             sender,
             created_at: Instant::now(),
         };
-        let should_create_batch = {
-            let mut pending = self.request_queue.write().await;
+        let batch_to_send = {
+            let mut pending = self.request_queue.lock().await;
             pending.push_back(pending_request);
-            pending.len() >= self.config.max_batch_size
+
+            if pending.len() >= self.config.max_batch_size {
+                let batch_size = self.config.max_batch_size.min(pending.len());
+                let requests: Vec<PendingRequest> = pending.drain(..batch_size).collect();
+                Some(BatchRequest {
+                    requests,
+                    created_at: Instant::now(),
+                })
+            } else {
+                None
+            }
         };
 
-        if should_create_batch {
+        if let Some(batch) = batch_to_send {
             tracing::info!("Creating batch because of max batch size");
-            let requests = {
-                let mut pending = self.request_queue.write().await;
-                let requests: Vec<PendingRequest> = pending.drain(..).collect();
-                requests
-            };
-
-            let batch = BatchRequest {
-                requests,
-                created_at: Instant::now(),
-            };
-            if let Err(e) = self.batch_sender.send(batch) {
-                tracing::error!("Failed to send batch: {:?}", e);
-                return Err(ProxyError::BatchProcessingFailed(e.to_string()));
+            if self.batch_sender.send(batch).await.is_err() {
+                return Err(ProxyError::ServiceUnavailable);
             }
         }
+
         self.request_notify.notify_one();
 
         tracing::debug!("Waiting for response");
-        let result = timeout(
-            Duration::from_millis(self.config.max_wait_time_ms as u64 * 20),
-            receiver,
-        )
-        .await;
+        let result = timeout(TIMEOUT_DURATION, receiver).await;
 
         match result {
             Ok(Ok(embedding)) => {
@@ -116,7 +110,7 @@ impl BatchProcessor {
         }
     }
 
-    async fn start_worker_pool(&self, batch_receiver: channel::Receiver<BatchRequest>) {
+    async fn start_worker_pool(&self, batch_receiver: async_channel::Receiver<BatchRequest>) {
         let client = self.client.clone();
         let inference_url = self.inference_url.clone();
         let max_workers = self.config.max_concurrent_workers;
@@ -148,9 +142,9 @@ impl BatchProcessor {
         worker_id: usize,
         client: Arc<reqwest::Client>,
         inference_url: String,
-        receiver: channel::Receiver<BatchRequest>,
+        receiver: async_channel::Receiver<BatchRequest>,
     ) {
-        while let Ok(batch) = receiver.recv() {
+        while let Ok(batch) = receiver.recv().await {
             tracing::debug!(
                 "Worker {} received batch with {} requests",
                 worker_id,
@@ -236,37 +230,40 @@ impl BatchProcessor {
         let batch_sender = self.batch_sender.clone();
         let request_notify = self.request_notify.clone();
 
+        let batch_size = self.config.max_batch_size;
+
         tokio::spawn(async move {
             loop {
                 request_notify.notified().await;
                 tokio::time::sleep(timeout_duration).await;
                 tracing::debug!("Timeout worker woke up");
 
-                let should_create_batch = {
-                    pending_requests
-                        .read()
-                        .await
-                        .front()
-                        .map(|oldest| oldest.created_at.elapsed() >= timeout_duration)
-                        .unwrap_or(false)
+                let batch_to_send = {
+                    let mut pending = pending_requests.lock().await;
+                    let has_timed_out_request = pending.front().map_or(false, |oldest| {
+                        oldest.created_at.elapsed() >= timeout_duration
+                    });
+
+                    if has_timed_out_request {
+                        let batch_size = batch_size.min(pending.len());
+                        let requests: Vec<PendingRequest> = pending.drain(..batch_size).collect();
+                        Some(BatchRequest {
+                            requests,
+                            created_at: Instant::now(),
+                        })
+                    } else {
+                        None
+                    }
                 };
 
-                if should_create_batch {
-                    let requests = {
-                        let mut pending = pending_requests.write().await;
-                        let requests: Vec<PendingRequest> = pending.drain(..).collect();
-                        requests
-                    };
-
-                    let batch = BatchRequest {
-                        requests,
-                        created_at: Instant::now(),
-                    };
-                    if let Err(e) = batch_sender.send(batch) {
-                        tracing::error!("Failed to send batch: {:?}", e);
+                if let Some(batch) = batch_to_send {
+                    tracing::info!("Creating batch due to timeout");
+                    if let Err(e) = batch_sender.send(batch).await {
+                        tracing::error!("Failed to send timeout batch: {:?}", e);
                     }
+                } else {
+                    tracing::debug!("No timeout batch created");
                 }
-                tracing::debug!("No batch created by timer worker");
             }
         });
     }
